@@ -1,4 +1,4 @@
-from clip_annotator.gui.main import run
+from clip_annotator.main import run
 
 if __name__ == "__main__":
     run()

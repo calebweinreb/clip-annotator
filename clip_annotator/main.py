@@ -159,6 +159,8 @@ class MainWindow(QMainWindow):
         self.label_entry_box = TextBox(self)
         self.label_entry_box.setFont(QFont("Arial", 18))
         self.label_entry_box.text_entered.connect(self.add_label)
+        self.label_entry_box.textChanged.connect(self.label_options_box.filter_labels)
+        self.label_options_box.label_clicked.connect(self.label_entry_box.clear)
 
         # Create metadata box
         self.metadata_box = QLabel()
@@ -195,6 +197,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.video_player)
         layout.addWidget(self.current_labels_box)
         layout.addWidget(self.scrollbar)
+
+        layout.setStretch(0, 1)
+        layout.setStretch(3, 4)
+
+        self.label_options_box.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        self.label_entry_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.metadata_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.video_player.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.current_labels_box.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Minimum
+        )
+        self.scrollbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
@@ -302,6 +319,10 @@ class LabelsBox(QWidget):
         self.label_buttons = []
         self.layout = FlowLayout(self)
 
+        tmp_button = QPushButton("tmp")
+        tmp_button.setFont(QFont("Arial", 16))
+        self.setMinimumHeight(tmp_button.sizeHint().height())
+
     def set_labels(self, labels):
         for label_button in self.label_buttons:
             self.layout.removeWidget(label_button)
@@ -344,6 +365,12 @@ class LabelsBox(QWidget):
         )
         context_menu.exec_(button.mapToGlobal(pos))
 
+    def filter_labels(self, text):
+        for label_button in self.label_buttons:
+            label_button.setVisible(
+                label_button.text().lower().startswith(text.lower())
+            )
+
 
 class TextBox(QLineEdit):
     text_entered = Signal(str)
@@ -352,7 +379,6 @@ class TextBox(QLineEdit):
         super().__init__(parent)
         self.returnPressed.connect(self.on_enter_pressed)
 
-    @Slot()
     def on_enter_pressed(self):
         self.text_entered.emit(self.text())
         self.clear()

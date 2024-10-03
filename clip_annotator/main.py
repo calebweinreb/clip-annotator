@@ -36,9 +36,8 @@ def save_annotations(annotations, annotations_path):
         json.dump(annotations, file, indent=4)
 
 
-def get_next_unlabeled_clip(annotations):
-    """Get the index of the next clip that has not been labeled, or 0 if all clips have
-    been labeled
+def get_start_index(annotations):
+    """Get the index that follows the last labeled clip
 
     Args:
         annotations (list): Annotations in the format [[path, start, end, labels]]
@@ -46,11 +45,11 @@ def get_next_unlabeled_clip(annotations):
     Returns:
         clip_index (int): Index of the next clip that has not been labeled
     """
-    is_annotated = [len(labels) > 0 for (path, start, end, labels) in annotations]
-    if all(is_annotated):
+    is_annotated = [i for i, (_, _, _, labels) in enumerate(annotations) if labels]
+    if not any(is_annotated):
         return 0
     else:
-        return is_annotated.index(False)
+        return is_annotated[-1] + 1
 
 
 def get_unique_labels(annotations):
@@ -100,6 +99,20 @@ def safe_remove_label(existing_labels, label_to_remove):
         return existing_labels
 
 
+def safe_edit_label(labels, old_label, new_label):
+    """Edit a label in the existing labels if it is present
+
+    Args:
+        labels (list): List of existing labels
+        old_label (str): Label to edit
+        new_label (str): New label to replace the old label
+
+    Returns:
+        updated_labels (list): List of updated labels
+    """
+    return sorted([new_label if label == old_label else label for label in labels])
+
+
 def text_to_color(text):
     """Generate a color psuedo-randomly using input text as a seed
 
@@ -130,16 +143,22 @@ class MainWindow(QMainWindow):
         self.annotations = load_annotations(self.annotations_path)
 
         # Select the current clip index
-        self.current_clip_index = get_next_unlabeled_clip(self.annotations)
+        self.current_clip_index = get_start_index(self.annotations)
 
         # Create label options box
         unique_labels = get_unique_labels(self.annotations)
         self.label_options_box = LabelsBox(self)
         self.label_options_box.set_labels(unique_labels)
+        self.label_options_box.label_clicked.connect(self.add_label)
+        self.label_options_box.edit_clicked.connect(self.edit_label)
+        self.label_options_box.delete_clicked.connect(self.delete_label)
+        self.label_options_box.next_clicked.connect(self.go_to_next_instance)
+        self.label_options_box.prev_clicked.connect(self.go_to_prev_instance)
 
         # Create label entry box
         self.label_entry_box = TextBox(self)
         self.label_entry_box.setFont(QFont("Arial", 18))
+        self.label_entry_box.text_entered.connect(self.add_label)
 
         # Create metadata box
         self.metadata_box = QLabel()
@@ -153,18 +172,14 @@ class MainWindow(QMainWindow):
 
         # Create current labels box
         self.current_labels_box = LabelsBox(self)
+        self.current_labels_box.label_clicked.connect(self.remove_label)
 
         # Create scrollbar
         self.scrollbar = QScrollBar(Qt.Horizontal)
         self.scrollbar.setRange(0, len(self.annotations) - 1)
         self.scrollbar.setValue(self.current_clip_index)
-        self.scrollbar.setFixedHeight(25)
-
-        # Connect signals to slots
-        self.label_entry_box.text_entered.connect(self.add_label)
         self.scrollbar.valueChanged.connect(self.set_current_clip)
-        self.current_labels_box.label_clicked.connect(self.remove_label)
-        self.label_options_box.label_clicked.connect(self.add_label)
+        self.scrollbar.setFixedHeight(25)
 
         # Set the current clip
         self.set_current_clip(self.current_clip_index)
@@ -179,29 +194,71 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.metadata_box)
         layout.addWidget(self.video_player)
         layout.addWidget(self.current_labels_box)
-        layout.addStretch()
         layout.addWidget(self.scrollbar)
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
 
     def add_label(self, label):
+        """Add a label to the current clip"""
         current_labels = self.annotations[self.current_clip_index][3]
         current_labels = safe_add_label(current_labels, label)
         self.annotations[self.current_clip_index][3] = current_labels
-        self.label_options_box.set_labels(get_unique_labels(self.annotations))
-        self.current_labels_box.set_labels(current_labels)
-        save_annotations(self.annotations, self.annotations_path)
+        self.update_annotations()
 
     def remove_label(self, label):
+        """Remove a label from the current clip"""
         current_labels = self.annotations[self.current_clip_index][3]
         current_labels = safe_remove_label(current_labels, label)
         self.annotations[self.current_clip_index][3] = current_labels
+        self.update_annotations()
+
+    def delete_label(self, label):
+        """Delete a label from all annotations"""
+        reply = QMessageBox.question(
+            self,
+            "Delete label",
+            f'Are you sure you want to delete the label: "{label}"?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.annotations = [
+                (path, start, end, safe_remove_label(labels, label))
+                for path, start, end, labels in self.annotations
+            ]
+            self.update_annotations()
+
+    def edit_label(self, old_label):
+        """Edit a label in all annotations"""
+        new_label, ok = QInputDialog.getText(
+            self, "Edit label", f'Change "{old_label}" to:'
+        )
+        if ok and new_label:
+            self.annotations = [
+                (path, start, end, safe_edit_label(labels, old_label, new_label))
+                for path, start, end, labels in self.annotations
+            ]
+            self.update_annotations()
+
+    def go_to_next_instance(self, label):
+        pass
+
+    #     """Go to the next instance of a given label"""
+    #     for index in range(self.current_clip_index+1, len(self.annotations)):
+    #         if label in
+
+    def go_to_prev_instance(self, label):
+        pass
+
+    def update_annotations(self):
+        """Propogate changes to the annotations"""
         self.label_options_box.set_labels(get_unique_labels(self.annotations))
-        self.current_labels_box.set_labels(current_labels)
+        self.current_labels_box.set_labels(self.annotations[self.current_clip_index][3])
         save_annotations(self.annotations, self.annotations_path)
 
     def set_current_clip(self, index):
+        """Set the current clip index and update the UI"""
         self.current_clip_index = index
         path, start, end, labels = self.annotations[index]
         self.metadata_box.setText(
@@ -211,6 +268,7 @@ class MainWindow(QMainWindow):
         self.debounce_timer.start()
 
     def load_video(self):
+        """Load the video for the current clip"""
         path, start, end, labels = self.annotations[self.current_clip_index]
         if not os.path.exists(path):
             error_msg = f"The video file:\n{path} does not exist."
@@ -221,6 +279,7 @@ class MainWindow(QMainWindow):
             self.video_player.play_video(video_array)
 
     def eventFilter(self, obj, event):
+        """Handle left and right key presses to navigate clips"""
         if event.type() == QEvent.KeyPress:
             if event.key() == Qt.Key_Left:
                 self.scrollbar.setValue(self.scrollbar.value() - 1)
@@ -233,6 +292,10 @@ class MainWindow(QMainWindow):
 
 class LabelsBox(QWidget):
     label_clicked = Signal(str)
+    next_clicked = Signal(str)
+    prev_clicked = Signal(str)
+    edit_clicked = Signal(str)
+    delete_clicked = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -250,16 +313,36 @@ class LabelsBox(QWidget):
     def add_label(self, label):
         # Create button
         label_button = QPushButton(label)
+        label_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        label_button.customContextMenuRequested.connect(self.show_button_context_menu)
         label_button.clicked.connect(lambda: self.label_clicked.emit(label))
         self.label_buttons.append(label_button)
         self.layout.addWidget(label_button)
 
         # Set button style
-        label_button.setFont(QFont("Arial", 18))
+        label_button.setFont(QFont("Arial", 16))
         color = text_to_color(label)
         label_button.setStyleSheet(
             f"background-color: rgb({color[0]}, {color[1]}, {color[2]}); color: black"
         )
+
+    def show_button_context_menu(self, pos):
+        button = self.sender()
+        label = button.text()
+        context_menu = QMenu(self)
+        context_menu.addAction(f"Edit").triggered.connect(
+            lambda: self.edit_clicked.emit(label)
+        )
+        context_menu.addAction(f"Delete").triggered.connect(
+            lambda: self.delete_clicked.emit(label)
+        )
+        context_menu.addAction(f"Next instance").triggered.connect(
+            lambda: self.next_clicked.emit(label)
+        )
+        context_menu.addAction(f"Previous instance").triggered.connect(
+            lambda: self.prev_clicked.emit(label)
+        )
+        context_menu.exec_(button.mapToGlobal(pos))
 
 
 class TextBox(QLineEdit):

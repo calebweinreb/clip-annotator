@@ -109,6 +109,8 @@ class VideoPlayer(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout()
+        # self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.video_label)
         self.setLayout(layout)
 
@@ -122,7 +124,9 @@ class VideoPlayer(QWidget):
         q_image = QImage(
             frame.data, width, height, bytes_per_line, QImage.Format_RGB888
         )
-        pixmap = QPixmap.fromImage(q_image)
+        pixmap = QPixmap.fromImage(q_image).scaled(
+            self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
         self.video_label.setPixmap(pixmap)
         self.current_frame = (self.current_frame + 1) % self.total_frames
 
@@ -131,6 +135,10 @@ class VideoPlayer(QWidget):
         self.current_frame = 0
         self.total_frames = len(video_array)
         self.timer.start(int(1000 / fps))
+
+    # def resizeEvent(self, event):
+    #     super().resizeEvent(event)
+    #     self.update_frame()
 
 
 def set_style(app):

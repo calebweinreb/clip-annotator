@@ -8,11 +8,11 @@ import colorsys
 import hashlib
 import numpy as np
 from vidio.read import OpenCVReader
-from .utils import FlowLayout, VideoPlayer, set_style
+from .utils import FlowLayout, VideoPlayer, set_style, ErrorDialog
 
 
 def load_annotations(annotations_path):
-    """Load annotations from the JSON file
+    """Load annotations from the JSON file and check if video files exist
 
     Args:
         annotations_path (str): Path to the JSON file containing annotations
@@ -22,7 +22,14 @@ def load_annotations(annotations_path):
     """
     with open(annotations_path, "r") as file:
         annotations = json.load(file)
-    return annotations
+
+    all_paths = set([path for path, _, _, _ in annotations])
+    if not all([os.path.exists(path) for path in all_paths]):
+        error_msg = "The following video files do not exist:\n"
+        error_msg += "\n".join([path for path in all_paths if not os.path.exists(path)])
+    else:
+        error_msg = ""
+    return annotations, error_msg
 
 
 def save_annotations(annotations, annotations_path):
@@ -130,7 +137,7 @@ def text_to_color(text):
 class MainWindow(QMainWindow):
     def __init__(self, args):
         super().__init__()
-        self.setWindowTitle("Clip Annotator")
+        self.setWindowTitle("Clip Labeler")
 
         annotations_path = args[0]
         if not os.path.exists(annotations_path):
@@ -140,10 +147,15 @@ class MainWindow(QMainWindow):
 
         # Load annotations and save path
         self.annotations_path = annotations_path
-        self.annotations = load_annotations(self.annotations_path)
+        annotations, error_msg = load_annotations(self.annotations_path)
+        if error_msg:
+            ErrorDialog(error_msg, self).exec()
+            sys.exit()
+        else:
+            self.annotations = annotations
 
-        # Select the current clip index
-        self.current_clip_index = get_start_index(self.annotations)
+        # Select the current index
+        self.current_index = get_start_index(self.annotations)
 
         # Create label options box
         unique_labels = get_unique_labels(self.annotations)
@@ -165,26 +177,23 @@ class MainWindow(QMainWindow):
         # Create metadata box
         self.metadata_box = QLabel()
 
-        # Create video player and debounce timer
+        # Create video player
         self.video_player = VideoPlayer()
-        self.debounce_timer = QTimer()
-        self.debounce_timer.setInterval(50)
-        self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.timeout.connect(self.load_video)
 
         # Create current labels box
         self.current_labels_box = LabelsBox(self)
         self.current_labels_box.label_clicked.connect(self.remove_label)
 
+        # Set the current index
+        current_index = get_start_index(self.annotations)
+        self.set_current_index(current_index)
+
         # Create scrollbar
         self.scrollbar = QScrollBar(Qt.Horizontal)
         self.scrollbar.setRange(0, len(self.annotations) - 1)
-        self.scrollbar.setValue(self.current_clip_index)
-        self.scrollbar.valueChanged.connect(self.set_current_clip)
+        self.scrollbar.setValue(self.current_index)
+        self.scrollbar.valueChanged.connect(self.set_current_index)
         self.scrollbar.setFixedHeight(25)
-
-        # Set the current clip
-        self.set_current_clip(self.current_clip_index)
 
         # Initialize layout
         self.init_ui()
@@ -206,7 +215,6 @@ class MainWindow(QMainWindow):
         )
         self.label_entry_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.metadata_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.video_player.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.current_labels_box.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Minimum
         )
@@ -218,16 +226,16 @@ class MainWindow(QMainWindow):
 
     def add_label(self, label):
         """Add a label to the current clip"""
-        current_labels = self.annotations[self.current_clip_index][3]
+        current_labels = self.annotations[self.current_index][3]
         current_labels = safe_add_label(current_labels, label)
-        self.annotations[self.current_clip_index][3] = current_labels
+        self.annotations[self.current_index][3] = current_labels
         self.update_annotations()
 
     def remove_label(self, label):
         """Remove a label from the current clip"""
-        current_labels = self.annotations[self.current_clip_index][3]
+        current_labels = self.annotations[self.current_index][3]
         current_labels = safe_remove_label(current_labels, label)
-        self.annotations[self.current_clip_index][3] = current_labels
+        self.annotations[self.current_index][3] = current_labels
         self.update_annotations()
 
     def delete_label(self, label):
@@ -241,7 +249,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             self.annotations = [
-                (path, start, end, safe_remove_label(labels, label))
+                [path, start, end, safe_remove_label(labels, label)]
                 for path, start, end, labels in self.annotations
             ]
             self.update_annotations()
@@ -253,7 +261,7 @@ class MainWindow(QMainWindow):
         )
         if ok and new_label:
             self.annotations = [
-                (path, start, end, safe_edit_label(labels, old_label, new_label))
+                [path, start, end, safe_edit_label(labels, old_label, new_label)]
                 for path, start, end, labels in self.annotations
             ]
             self.update_annotations()
@@ -262,7 +270,7 @@ class MainWindow(QMainWindow):
         pass
 
     #     """Go to the next instance of a given label"""
-    #     for index in range(self.current_clip_index+1, len(self.annotations)):
+    #     for index in range(self.current_index+1, len(self.annotations)):
     #         if label in
 
     def go_to_prev_instance(self, label):
@@ -271,29 +279,18 @@ class MainWindow(QMainWindow):
     def update_annotations(self):
         """Propogate changes to the annotations"""
         self.label_options_box.set_labels(get_unique_labels(self.annotations))
-        self.current_labels_box.set_labels(self.annotations[self.current_clip_index][3])
+        self.current_labels_box.set_labels(self.annotations[self.current_index][3])
         save_annotations(self.annotations, self.annotations_path)
 
-    def set_current_clip(self, index):
-        """Set the current clip index and update the UI"""
-        self.current_clip_index = index
+    def set_current_index(self, index):
+        """Set the current index and update the UI"""
+        self.current_index = index
         path, start, end, labels = self.annotations[index]
         self.metadata_box.setText(
             f"Clip index: {index}\nPath: {path}\nFrames: ({start} - {end})"
         )
         self.current_labels_box.set_labels(labels)
-        self.debounce_timer.start()
-
-    def load_video(self):
-        """Load the video for the current clip"""
-        path, start, end, labels = self.annotations[self.current_clip_index]
-        if not os.path.exists(path):
-            error_msg = f"The video file:\n{path} does not exist."
-            QMessageBox.warning(self, "Error", error_msg)
-        else:
-            reader = OpenCVReader(path)
-            video_array = reader[start:end]
-            self.video_player.play_video(video_array)
+        self.video_player.load_video((path, start, end))
 
     def eventFilter(self, obj, event):
         """Handle left and right key presses to navigate clips"""

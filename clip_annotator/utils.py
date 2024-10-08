@@ -1,6 +1,8 @@
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
+import numpy as np
+from vidio.read import OpenCVReader
 
 
 class FlowLayout(QLayout):
@@ -98,21 +100,29 @@ class VideoPlayer(QWidget):
         super().__init__()
 
         self.video_label = QLabel()
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_frame)
+        self.frame_timer = QTimer(self)
+        self.frame_timer.timeout.connect(self.update_frame)
 
+        self.debounce_timer = QTimer()
+        self.debounce_timer.setInterval(50)
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.timeout.connect(self._load)
+
+        self.video_info = None  # [path, start, end]
         self.video_array = None
         self.current_frame = None
-        self.total_frames = None
+        self.video_loader = None
+        self.fps = 30
 
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout()
-        # self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.addWidget(self.video_label)
-        self.setLayout(layout)
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
 
     def update_frame(self):
         if self.video_array is None:
@@ -128,17 +138,80 @@ class VideoPlayer(QWidget):
             self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.video_label.setPixmap(pixmap)
-        self.current_frame = (self.current_frame + 1) % self.total_frames
+        self.current_frame = (self.current_frame + 1) % len(self.video_array)
 
-    def play_video(self, video_array, fps=30):
+    def load_video(self, video_info):
+        self.video_info = video_info
+        self.debounce_timer.start()
+
+    def clear_video(self):
+        self.video_array = None
+        self.current_frame = None
+        self.video_label.clear()
+
+    def _load(self):
+        if self.video_loader and self.video_loader.isRunning():
+            self.video_loader.requestInterruption()
+            self.video_loader.wait()
+
+        self.video_loader = VideoLoaderThread(self.video_info)
+        self.video_loader.video_loaded.connect(self.play_video)
+        self.video_loader.start()
+
+    def play_video(self, video_array):
         self.video_array = video_array
         self.current_frame = 0
-        self.total_frames = len(video_array)
-        self.timer.start(int(1000 / fps))
+        self.frame_timer.start(int(1000 / self.fps))
 
     # def resizeEvent(self, event):
-    #     super().resizeEvent(event)
+    #     # Call the update_frame method to adjust the video display
     #     self.update_frame()
+    #     super().resizeEvent(event)
+
+
+class VideoLoaderThread(QThread):
+    video_loaded = Signal(list)
+
+    def __init__(self, video_info):
+        super().__init__()
+        self.video_info = video_info
+
+    def run(self):
+        video_path, start_frame, end_frame = self.video_info
+        reader = OpenCVReader(video_path)
+        video_array = []
+        for frame in range(start_frame, end_frame):
+            if self.isInterruptionRequested():
+                return  # Exit the thread if interruption is requested
+            video_array.append(reader[frame])
+        self.video_loaded.emit(video_array)
+
+
+class ErrorDialog(QDialog):
+    def __init__(self, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Error")
+
+        self.text_edit = QTextEdit(self)
+        self.text_edit.setReadOnly(True)  # Make the text edit read-only
+        self.text_edit.setText(message)  # Set the error message
+        self.text_edit.setLineWrapMode(QTextEdit.NoWrap)  # Disable text wrapping
+
+        # Ensure scroll bars are always shown
+        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+
+        # Add a close button
+        self.close_button = QPushButton("Close", self)
+        self.close_button.clicked.connect(self.accept)  # Close dialog on button click
+
+        # Arrange widgets in the layout
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.text_edit)
+        layout.addWidget(self.close_button)
+
+        self.setLayout(layout)
+        self.resize(600, 400)
 
 
 def set_style(app):

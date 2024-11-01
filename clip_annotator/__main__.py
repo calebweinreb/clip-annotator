@@ -1,4 +1,4 @@
-from clip_annotator.labeler import run
+from .main import run
 
 if __name__ == "__main__":
     run()

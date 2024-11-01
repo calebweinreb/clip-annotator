@@ -48,16 +48,9 @@ def text_to_color(text):
     return [int(255 * x) for x in colorsys.hsv_to_rgb(hue, 1, 1)]
 
 
-class MainWindow(QMainWindow):
-    def __init__(self, args):
+class Labeler(QWidget):
+    def __init__(self, annotations_path):
         super().__init__()
-        self.setWindowTitle("Clip Labeler")
-
-        annotations_path = args[0]
-        if not os.path.exists(annotations_path):
-            error_msg = f"The annotations file:\n{annotations_path} does not exist."
-            QMessageBox.warning(self, "Error", error_msg)
-            sys.exit()
 
         # Load annotations and save path
         self.annotations_path = annotations_path
@@ -94,7 +87,7 @@ class MainWindow(QMainWindow):
         self.current_labels_box.label_clicked.connect(self.remove_label)
 
         # Set the current index
-        current_index = get_start_index(self.annotations)
+        current_index = self.get_start_index()
         self.set_current_index(current_index)
 
         # Create scrollbar
@@ -108,7 +101,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         layout.addWidget(self.label_options_box)
         layout.addWidget(self.label_entry_box)
         layout.addWidget(self.metadata_box)
@@ -129,9 +122,6 @@ class MainWindow(QMainWindow):
         )
         self.scrollbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
-        widget = QWidget()
-        widget.setLayout(layout)
-        self.setCentralWidget(widget)
 
     def add_label(self, label):
         """Add a label to the current clip"""
@@ -201,24 +191,20 @@ class MainWindow(QMainWindow):
         self.current_labels_box.set_labels(labels)
         self.video_player.load_video((path, start, end))
 
-    def eventFilter(self, obj, event):
-        """Handle left and right key presses to navigate clips"""
-        if event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_Left:
-                self.scrollbar.setValue(self.scrollbar.value() - 1)
-                return True
-            elif event.key() == Qt.Key_Right:
-                self.scrollbar.setValue(self.scrollbar.value() + 1)
-                return True
-        return super().eventFilter(obj, event)
+    def left_keypress(self):
+        self.scrollbar.setValue(self.scrollbar.value() - 1)
+
+    def right_keypress(self):
+        self.scrollbar.setValue(self.scrollbar.value() + 1)
 
     def save_annotations(self):
         with open(self.annotations_path, "w") as file:
-            json.dump(self.annotations, file, indent=4)
+            save_data = {"type": "label", "annotations": self.annotations}
+            json.dump(save_data, file, indent=4)
 
     def load_annotations(self):
         with open(self.annotations_path, "r") as file:
-            annotations = json.load(file)
+            annotations = json.load(file)["annotations"]
         all_paths = set([path for path, _, _, _ in annotations])
         nonexitent_paths = [path for path in all_paths if not os.path.exists(path)]
         if nonexitent_paths:
@@ -236,6 +222,9 @@ class MainWindow(QMainWindow):
             return 0
         else:
             return np.nonzero(is_annotated)[0][-1] + 1
+
+    def close(self):
+        return True
 
 
 class LabelsBox(QWidget):
@@ -313,19 +302,3 @@ class TextBox(QLineEdit):
     def on_enter_pressed(self):
         self.text_entered.emit(self.text())
         self.clear()
-
-
-def run():
-    app = QApplication(sys.argv)
-    app = set_style(app)
-
-    window = MainWindow(sys.argv[1:])
-    window.resize(800, 600)
-    window.show()
-
-    app.installEventFilter(window)
-    sys.exit(app.exec_())
-
-
-if __name__ == "__main__":
-    run()

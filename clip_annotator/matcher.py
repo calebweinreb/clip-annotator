@@ -9,26 +9,20 @@ import time
 from .utils import VideoPlayer, set_style, ErrorDialog, safe_add, safe_remove
 
 
-class MainWindow(QMainWindow):
+class Matcher(QWidget):
     SIMILAR_COLOR = QColor(0, 0, 255)
     DISSIMILAR_COLOR = QColor(255, 0, 0)
     NEUTRAL_COLOR = QColor(45, 45, 45)
     SPLITTER_RATIO = 0.333
 
-    def __init__(self, args):
+    def __init__(self, annotations_path):
         super().__init__()
-        self.setWindowTitle("Clip Matcher")
-
-        annotations_path = args[0]
-        if not os.path.exists(annotations_path):
-            error_msg = f"The annotations file:\n{annotations_path} does not exist."
-            QMessageBox.warning(self, "Error", error_msg)
-            sys.exit()
 
         # Load annotations and save path
         self.annotations_path = annotations_path
         self.max_videos = None  # will be set by load_annotations
         self.load_annotations()
+        self.unsaved_changes = False
 
         # Create label to display annotation file path
         self.annotation_path_label = QLabel(f"Annotation file: {annotations_path}")
@@ -55,11 +49,6 @@ class MainWindow(QMainWindow):
         self.scrollbar.setValue(self.current_index)
         self.scrollbar.valueChanged.connect(self.set_current_index)
         self.scrollbar.setFixedHeight(25)
-
-        # Create save button
-        self.unsaved_changes = False
-        self.save_button = QPushButton("Save")
-        self.save_button.clicked.connect(self.save_annotations)
 
         # Initialize layout
         self.init_ui()
@@ -93,8 +82,6 @@ class MainWindow(QMainWindow):
     def init_ui(self):
 
         control_bar = QHBoxLayout()
-        control_bar.addWidget(self.save_button)
-        control_bar.addSpacing(10)
         control_bar.addWidget(self.index_label)
         control_bar.addWidget(self.scrollbar)
 
@@ -103,14 +90,11 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.target_video_grid)
         splitter.setSizes([self.SPLITTER_RATIO * 100, (1 - self.SPLITTER_RATIO) * 100])
 
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         layout.addWidget(self.annotation_path_label)
         layout.addWidget(splitter)
         layout.addLayout(control_bar)
 
-        widget = QWidget()
-        widget.setLayout(layout)
-        self.setCentralWidget(widget)
         self.index_label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         self.scrollbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self.target_video_grid.arrange_grid()
@@ -147,7 +131,7 @@ class MainWindow(QMainWindow):
             ]
         """
         with open(self.annotations_path, "r") as file:
-            annotations = json.load(file)
+            annotations = json.load(file)["annotations"]
         all_target_clips = sum([annotation[1] for annotation in annotations], [])
         all_query_clips = [annotation[0] for annotation in annotations]
         all_paths = set([path for path, _, _ in all_target_clips + all_query_clips])
@@ -163,7 +147,8 @@ class MainWindow(QMainWindow):
 
     def save_annotations(self):
         with open(self.annotations_path, "w") as file:
-            json.dump(self.annotations, file, indent=4)
+            save_data = {"type": "match", "annotations": self.annotations}
+            json.dump(save_data, file, indent=4)
         self.unsaved_changes = False
 
     def get_start_index(self):
@@ -178,18 +163,13 @@ class MainWindow(QMainWindow):
             index = np.nonzero(is_annotated)[0][-1] + 1
             return min(index, len(self.annotations) - 1)
 
-    def eventFilter(self, obj, event):
-        """Handle left and right key presses to navigate clips"""
-        if event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_Left:
-                self.scrollbar.setValue(self.scrollbar.value() - 1)
-                return True
-            elif event.key() == Qt.Key_Right:
-                self.scrollbar.setValue(self.scrollbar.value() + 1)
-                return True
-        return super().eventFilter(obj, event)
+    def left_keypress(self):
+        self.scrollbar.setValue(self.scrollbar.value() - 1)
 
-    def closeEvent(self, event):
+    def right_keypress(self):
+        self.scrollbar.setValue(self.scrollbar.value() + 1)
+
+    def close(self):
         if self.unsaved_changes:
             reply = QMessageBox.question(
                 self,
@@ -200,13 +180,13 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.Save:
                 self.save_annotations()
-                event.accept()  # After saving, allow the application to close
+                return True
             elif reply == QMessageBox.Discard:
-                event.accept()  # Discard changes and close the application
+                return True
             else:
-                event.ignore()  # Cancel the close event
+                return False
         else:
-            event.accept()  # No unsaved changes, close the application
+            return True
 
 
 class VideoGrid(QWidget):
@@ -227,18 +207,3 @@ class VideoGrid(QWidget):
         for i, video_player in enumerate(self.video_players):
             self.layout.addWidget(video_player, i // cols, i % cols)
 
-
-def run():
-    app = QApplication(sys.argv)
-    app = set_style(app)
-
-    window = MainWindow(sys.argv[1:])
-    window.resize(1200, 900)
-    window.show()
-
-    app.installEventFilter(window)
-    sys.exit(app.exec_())
-
-
-if __name__ == "__main__":
-    run()

@@ -5,6 +5,49 @@ import numpy as np
 from vidio.read import OpenCVReader
 
 
+def safe_add(items, new_item):
+    """Add an item to a list if it is not already present
+
+    Args:
+        items (list): List of existing items
+        new_item (str): Item to add
+
+    Returns:
+        updated_items (list): List of updated items
+    """
+    if new_item not in items:
+        return sorted(items + [new_item])
+    else:
+        return items
+
+
+def safe_remove(items, item):
+    """Remove an item from a list if it is present
+
+    Args:
+        items (list): List of existing items
+        item (str): Item to remove
+
+    Returns:
+        updated_items (list): List of updated items
+    """
+    return sorted([i for i in items if i != item])
+
+
+def safe_substitute(items, old_item, new_item):
+    """Replace an item in a list with a new item
+
+    Args:
+        items (list): List of existing items
+        old_item (str): Item to replace
+        new_item (str): Item to replace with
+
+    Returns:
+        updated_items (list): List of updated items
+    """
+    return sorted([new_item if i == old_item else i for i in items])
+
+
 class FlowLayout(QLayout):
     def __init__(self, parent=None, margin=0, spacing=-1):
         super(FlowLayout, self).__init__(parent)
@@ -96,9 +139,12 @@ class FlowLayout(QLayout):
 
 
 class VideoPlayer(QWidget):
+    clicked = Signal(bool)  # True means left click, False means right click
+
     def __init__(self):
         super().__init__()
 
+        self.medatada_label = QLabel()
         self.video_label = QLabel()
         self.frame_timer = QTimer(self)
         self.frame_timer.timeout.connect(self.update_frame)
@@ -118,11 +164,15 @@ class VideoPlayer(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setContentsMargins(5, 2, 5, 8)
+        layout.setSpacing(2)
+        layout.addWidget(self.medatada_label)
         layout.addWidget(self.video_label)
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.medatada_label.setFixedHeight(12)
+        self.medatada_label.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def update_frame(self):
         if self.video_array is None:
@@ -145,15 +195,19 @@ class VideoPlayer(QWidget):
         self.debounce_timer.start()
 
     def clear_video(self):
+        if self.video_loader and self.video_loader.isRunning():
+            self.video_loader.requestInterruption()
+            self.video_loader.wait()
+        self.debounce_timer.stop()
         self.video_array = None
         self.current_frame = None
         self.video_label.clear()
+        self.medatada_label.clear()
 
     def _load(self):
         if self.video_loader and self.video_loader.isRunning():
             self.video_loader.requestInterruption()
             self.video_loader.wait()
-
         self.video_loader = VideoLoaderThread(self.video_info)
         self.video_loader.video_loaded.connect(self.play_video)
         self.video_loader.start()
@@ -163,10 +217,23 @@ class VideoPlayer(QWidget):
         self.current_frame = 0
         self.frame_timer.start(int(1000 / self.fps))
 
-    # def resizeEvent(self, event):
-    #     # Call the update_frame method to adjust the video display
-    #     self.update_frame()
-    #     super().resizeEvent(event)
+    def set_metadata(self, metadata):
+        text = ""
+        for key, value in metadata.items():
+            text += f"{key}: {value}\n"
+        self.medatada_label.setText(text)
+
+    def set_background_color(self, color):
+        palette = self.palette()
+        palette.setColor(QPalette.Window, color)
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(True)
+        elif event.button() == Qt.RightButton:
+            self.clicked.emit(False)
 
 
 class VideoLoaderThread(QThread):

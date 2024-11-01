@@ -8,55 +8,15 @@ import colorsys
 import hashlib
 import numpy as np
 from vidio.read import OpenCVReader
-from .utils import FlowLayout, VideoPlayer, set_style, ErrorDialog
-
-
-def load_annotations(annotations_path):
-    """Load annotations from the JSON file and check if video files exist
-
-    Args:
-        annotations_path (str): Path to the JSON file containing annotations
-
-    Returns:
-        annotations (list): Annotations in the format [[path, start, end, labels]]
-    """
-    with open(annotations_path, "r") as file:
-        annotations = json.load(file)
-
-    all_paths = set([path for path, _, _, _ in annotations])
-    if not all([os.path.exists(path) for path in all_paths]):
-        error_msg = "The following video files do not exist:\n"
-        error_msg += "\n".join([path for path in all_paths if not os.path.exists(path)])
-    else:
-        error_msg = ""
-    return annotations, error_msg
-
-
-def save_annotations(annotations, annotations_path):
-    """Save annotations to the JSON file
-
-    Args:
-        annotations (list): Annotations in the format [[path, start, end, labels]]
-        annotations_path (str): Path to the JSON file to save the annotations
-    """
-    with open(annotations_path, "w") as file:
-        json.dump(annotations, file, indent=4)
-
-
-def get_start_index(annotations):
-    """Get the index that follows the last labeled clip
-
-    Args:
-        annotations (list): Annotations in the format [[path, start, end, labels]]
-
-    Returns:
-        clip_index (int): Index of the next clip that has not been labeled
-    """
-    is_annotated = [i for i, (_, _, _, labels) in enumerate(annotations) if labels]
-    if not any(is_annotated):
-        return 0
-    else:
-        return is_annotated[-1] + 1
+from .utils import (
+    FlowLayout,
+    VideoPlayer,
+    ErrorDialog,
+    set_style,
+    safe_add,
+    safe_remove,
+    safe_substitute,
+)
 
 
 def get_unique_labels(annotations):
@@ -72,52 +32,6 @@ def get_unique_labels(annotations):
     for path, start, end, labels in annotations:
         unique_labels.update(labels)
     return sorted(unique_labels)
-
-
-def safe_add_label(existing_labels, new_label):
-    """Add a new label to the existing labels if it is not already present
-
-    Args:
-        existing_labels (list): List of existing labels
-        new_label (str): New label to add
-
-    Returns:
-        updated_labels (list): List of updated labels
-    """
-    if new_label not in existing_labels:
-        return sorted(existing_labels + [new_label])
-    else:
-        return existing_labels
-
-
-def safe_remove_label(existing_labels, label_to_remove):
-    """Remove a label from the existing labels if it is present
-
-    Args:
-        existing_labels (list): List of existing labels
-        label_to_remove (str): Label to remove
-
-    Returns:
-        updated_labels (list): List of updated labels
-    """
-    if label_to_remove in existing_labels:
-        return sorted([label for label in existing_labels if label != label_to_remove])
-    else:
-        return existing_labels
-
-
-def safe_edit_label(labels, old_label, new_label):
-    """Edit a label in the existing labels if it is present
-
-    Args:
-        labels (list): List of existing labels
-        old_label (str): Label to edit
-        new_label (str): New label to replace the old label
-
-    Returns:
-        updated_labels (list): List of updated labels
-    """
-    return sorted([new_label if label == old_label else label for label in labels])
 
 
 def text_to_color(text):
@@ -147,15 +61,10 @@ class MainWindow(QMainWindow):
 
         # Load annotations and save path
         self.annotations_path = annotations_path
-        annotations, error_msg = load_annotations(self.annotations_path)
-        if error_msg:
-            ErrorDialog(error_msg, self).exec()
-            sys.exit()
-        else:
-            self.annotations = annotations
+        self.load_annotations()
 
         # Select the current index
-        self.current_index = get_start_index(self.annotations)
+        self.current_index = self.get_start_index()
 
         # Create label options box
         unique_labels = get_unique_labels(self.annotations)
@@ -227,14 +136,14 @@ class MainWindow(QMainWindow):
     def add_label(self, label):
         """Add a label to the current clip"""
         current_labels = self.annotations[self.current_index][3]
-        current_labels = safe_add_label(current_labels, label)
+        current_labels = safe_add(current_labels, label)
         self.annotations[self.current_index][3] = current_labels
         self.update_annotations()
 
     def remove_label(self, label):
         """Remove a label from the current clip"""
         current_labels = self.annotations[self.current_index][3]
-        current_labels = safe_remove_label(current_labels, label)
+        current_labels = safe_remove(current_labels, label)
         self.annotations[self.current_index][3] = current_labels
         self.update_annotations()
 
@@ -249,7 +158,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             self.annotations = [
-                [path, start, end, safe_remove_label(labels, label)]
+                [path, start, end, safe_remove(labels, label)]
                 for path, start, end, labels in self.annotations
             ]
             self.update_annotations()
@@ -261,7 +170,7 @@ class MainWindow(QMainWindow):
         )
         if ok and new_label:
             self.annotations = [
-                [path, start, end, safe_edit_label(labels, old_label, new_label)]
+                [path, start, end, safe_substitute(labels, old_label, new_label)]
                 for path, start, end, labels in self.annotations
             ]
             self.update_annotations()
@@ -280,7 +189,7 @@ class MainWindow(QMainWindow):
         """Propogate changes to the annotations"""
         self.label_options_box.set_labels(get_unique_labels(self.annotations))
         self.current_labels_box.set_labels(self.annotations[self.current_index][3])
-        save_annotations(self.annotations, self.annotations_path)
+        self.save_annotations()
 
     def set_current_index(self, index):
         """Set the current index and update the UI"""
@@ -302,6 +211,31 @@ class MainWindow(QMainWindow):
                 self.scrollbar.setValue(self.scrollbar.value() + 1)
                 return True
         return super().eventFilter(obj, event)
+
+    def save_annotations(self):
+        with open(self.annotations_path, "w") as file:
+            json.dump(self.annotations, file, indent=4)
+
+    def load_annotations(self):
+        with open(self.annotations_path, "r") as file:
+            annotations = json.load(file)
+        all_paths = set([path for path, _, _, _ in annotations])
+        nonexitent_paths = [path for path in all_paths if not os.path.exists(path)]
+        if nonexitent_paths:
+            error_msg = "The following video files do not exist:\n"
+            error_msg += "\n".join(nonexitent_paths)
+            ErrorDialog(error_msg, self).exec()
+            sys.exit()
+        else:
+            self.annotations = annotations
+
+    def get_start_index(self):
+        """Get the index that follows the last labeled clip"""
+        is_annotated = [len(labels) > 0 for _, _, _, labels in self.annotations]
+        if not any(is_annotated):
+            return 0
+        else:
+            return np.nonzero(is_annotated)[0][-1] + 1
 
 
 class LabelsBox(QWidget):
